@@ -1406,6 +1406,7 @@ class AsyncMemory(MemoryBase):
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 100,
+        order: bool = False,
     ):
         """
         List all memories.
@@ -1441,7 +1442,7 @@ class AsyncMemory(MemoryBase):
             "mem0.get_all", self, {"limit": limit, "keys": keys, "encoded_ids": encoded_ids, "sync_type": "async"}
         )
 
-        vector_store_task = asyncio.create_task(self._get_all_from_vector_store(effective_filters, limit))
+        vector_store_task = asyncio.create_task(self._get_all_from_vector_store(effective_filters, limit, order))
 
         graph_task = None
         if self.enable_graph:
@@ -1471,8 +1472,8 @@ class AsyncMemory(MemoryBase):
 
         return results_dict
 
-    async def _get_all_from_vector_store(self, filters, limit):
-        memories_result = await asyncio.to_thread(self.vector_store.list, filters=filters, limit=limit)
+    async def _get_all_from_vector_store(self, filters, limit, order):
+        memories_result = await asyncio.to_thread(self.vector_store.list, filters=filters, limit=limit, order=order)
         actual_memories = (
             memories_result[0]
             if isinstance(memories_result, (tuple, list)) and len(memories_result) > 0

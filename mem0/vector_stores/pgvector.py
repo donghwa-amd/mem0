@@ -156,8 +156,16 @@ class PGVector(VectorStoreBase):
                 CREATE TABLE IF NOT EXISTS {self.collection_name} (
                     id UUID PRIMARY KEY,
                     vector vector({self.embedding_model_dims}),
-                    payload JSONB
+                    payload JSONB,
+                    updated_at TIMESTAMPTZ
                 );
+                """
+            )
+            # index on most-recent update for efficient ordering
+            cur.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS {self.collection_name}_updated_at_idx
+                ON {self.collection_name} (updated_at DESC);
                 """
             )
             if self.use_diskann and self.embedding_model_dims < 2000:
@@ -182,20 +190,22 @@ class PGVector(VectorStoreBase):
 
     def insert(self, vectors: list[list[float]], payloads=None, ids=None) -> None:
         logger.info(f"Inserting {len(vectors)} vectors into collection {self.collection_name}")
-        json_payloads = [json.dumps(payload) for payload in payloads]
 
-        data = [(id, vector, payload) for id, vector, payload in zip(ids, vectors, json_payloads)]
+        data = [
+            (id, vector, json.dumps(payload), payload["created_at"])
+            for id, vector, payload in zip(ids, vectors, payloads)
+        ]
         if PSYCOPG_VERSION == 3:
             with self._get_cursor(commit=True) as cur:
                 cur.executemany(
-                    f"INSERT INTO {self.collection_name} (id, vector, payload) VALUES (%s, %s, %s)",
+                    f"INSERT INTO {self.collection_name} (id, vector, payload, updated_at) VALUES (%s, %s, %s, %s)",
                     data,
                 )
         else:
             with self._get_cursor(commit=True) as cur:
                 execute_values(
                     cur,
-                    f"INSERT INTO {self.collection_name} (id, vector, payload) VALUES %s",
+                    f"INSERT INTO {self.collection_name} (id, vector, payload, updated_at) VALUES %s",
                     data,
                 )
 
@@ -281,11 +291,19 @@ class PGVector(VectorStoreBase):
                         f"UPDATE {self.collection_name} SET payload = %s WHERE id = %s",
                         (Json(payload), vector_id),
                     )
+                    cur.execute(
+                        f"UPDATE {self.collection_name} SET updated_at = %s WHERE id = %s",
+                        (payload["updated_at"], vector_id),
+                    )
                 else:
                     # psycopg2 uses psycopg2.extras.Json
                     cur.execute(
                         f"UPDATE {self.collection_name} SET payload = %s WHERE id = %s",
                         (Json(payload), vector_id),
+                    )
+                    cur.execute(
+                        f"UPDATE {self.collection_name} SET updated_at = %s WHERE id = %s",
+                        (payload["updated_at"], vector_id),
                     )
 
 
@@ -350,7 +368,8 @@ class PGVector(VectorStoreBase):
     def list(
         self,
         filters: Optional[dict] = None,
-        limit: Optional[int] = 100
+        limit: Optional[int] = 100,
+        order: bool = False
     ) -> List[OutputData]:
         """
         List all vectors in a collection.
@@ -371,11 +390,13 @@ class PGVector(VectorStoreBase):
                 filter_params.extend([k, str(v)])
 
         filter_clause = "WHERE " + " AND ".join(filter_conditions) if filter_conditions else ""
+        order_clause = "ORDER BY updated_at DESC" if order else ""
 
         query = f"""
             SELECT id, vector, payload
             FROM {self.collection_name}
             {filter_clause}
+            {order_clause}
             LIMIT %s
         """
 
