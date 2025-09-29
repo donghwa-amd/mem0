@@ -1212,7 +1212,7 @@ class AsyncMemory(MemoryBase):
             response_format={"type": "json_object"},
         )
         try:
-            response = remove_code_blocks(response)
+            response = remove_code_blocks(response).split("assistantfinal")[-1].strip()
             new_retrieved_facts = json.loads(response)["facts"]
         except Exception as e:
             logger.error(f"Error in new_retrieved_facts: {e}")
@@ -1269,7 +1269,7 @@ class AsyncMemory(MemoryBase):
                     logger.warning("Empty response from LLM, no memories to extract")
                     new_memories_with_actions = {}
                 else:
-                    response = remove_code_blocks(response)
+                    response = remove_code_blocks(response).split("assistantfinal")[-1].strip()
                     new_memories_with_actions = json.loads(response)
             except Exception as e:
                 logger.error(f"Invalid JSON response: {e}")
